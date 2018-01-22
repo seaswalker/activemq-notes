@@ -61,6 +61,6 @@
         <property name="concurrentConsumers" value="1"/>
         <property name="maxConcurrentConsumers" value="1"/>
         <property name="sessionTransacted" value="true" />
-        <property name="clientId" value="A" />
+        <property name="cacheLevelName" value="CACHE_CONSUMER" />
     </bean>
 </beans>

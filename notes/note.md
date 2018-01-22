@@ -330,4 +330,57 @@ public void dispatch(MessageDispatch md) {
 
 猜测需要处理连接已经建立(即已经开始监听消息)，但是消费者还没启动完毕这个时间空隙收到的消息。
 
+如果所有的Consumer都没有未消费的消息，那么Session将通过ActiveMQSessionExecutor的dispatch方法将消息分派给相应的Consumer:
 
+```java
+void dispatch(MessageDispatch message) {
+    // TODO - we should use a Map for this indexed by consumerId
+    for (ActiveMQMessageConsumer consumer : this.session.consumers) {
+        ConsumerId consumerId = message.getConsumerId();
+        if (consumerId.equals(consumer.getConsumerId())) {
+            consumer.dispatch(message);
+            break;
+        }
+    }
+}
+```
+
+这里就是一个简单的遍历对比Consumer ID，至此，整个消息的接收流程已经很清晰了，至于ActiveMQ采取何种策略决定发送到的消费者，这里不再深究，估计可以Round robin之类的。
+
+# DefaultMessageListenerContainer
+
+下面来看一下Spring对JMS的封装，下面是我们常用的一种配置:
+
+```xml
+<bean class="org.springframework.jms.listener.DefaultMessageListenerContainer">
+    <property name="connectionFactory" ref="connectionFactory" />
+    <property name="destination" ref="virtualTopicConsumer" />
+    <property name="messageListener" ref="virtualTopicListener" />
+    <property name="concurrentConsumers" value="1"/>
+    <property name="maxConcurrentConsumers" value="1"/>
+    <property name="sessionTransacted" value="true" />
+    <property name="cacheLevelName" value="CACHE_CONSUMER" />
+</bean>
+```
+
+理解此类的关键是理解concurrentConsumers和缓存级别的意义。
+
+## consumer数量
+
+简单来说，正如属性名那样，此字段的含义其实就是一个Container中消费者的数量，在DefaultMessageListenerContainer中每个消费者用内部类AsyncMessageListenerInvoker实现。
+
+concurrentConsumers决定了消费者数量的下限，maxConcurrentConsumers决定了消费者数量的上限，当有消息到来时DefaultMessageListenerContainer会尝试提升消费者的数量，直到maxConcurrentConsumers。
+
+## 缓存级别
+
+为什么有缓存级别这个东西呢? 
+
+一个Consumer的创建需要Connection、Sesssion这两个必不可少的组件，那么每次收到消息时是新创建一个组件还是对一个进行重用?这便是缓存的意义。所有的缓存级别用一张偷来的图表示:
+
+![缓存级别](images/cache_level.png)
+
+那么默认的缓存级别是什么呢?
+
+
+
+具体的源码级别的细节这里不再展开，
