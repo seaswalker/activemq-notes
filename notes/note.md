@@ -381,6 +381,148 @@ concurrentConsumers决定了消费者数量的下限，maxConcurrentConsumers决
 
 那么默认的缓存级别是什么呢?
 
+与容器中是否有事物管理器有关，如果有，那么使用最低的NONE级别，如果没有，那么使用最高的缓存Consumer级别。
 
+## 初始化
 
-具体的源码级别的细节这里不再展开，
+这一步所做的可以总结为三个方面：
+
+1. 如果缓存级别设为CACHE_AUTO，那么动态调整级别。
+2. 线程池的初始化。
+3. AsyncMessageListenerInvoker初始化。
+
+下面来通过源码对其初始化过程进行分析。DefaultMessageListenerContainer实现了Spring的InitializingBean接口，AbstractJmsListeningContainer实现了接口的afterPropertiesSet方法，
+并最终调用了initialize方法，实际的初始化工作将由此方法来完成。
+
+DefaultMessageListenerContainer.initialize:
+
+```java
+@Override
+public void initialize() {
+    // Adapt default cache level.
+    if (this.cacheLevel == CACHE_AUTO) {
+        this.cacheLevel = (getTransactionManager() != null ? CACHE_NONE : CACHE_CONSUMER);
+    }
+
+    // 线程池创建
+    synchronized (this.lifecycleMonitor) {
+        if (this.taskExecutor == null) {
+            this.taskExecutor = createDefaultTaskExecutor();
+        }
+    }
+
+    // 导致下面doInitialize方法的调用
+    super.initialize();
+}
+```
+
+线程池其实是一个SimpleAsyncTaskExecutor对象，其实现很有意思，**对于每一个提交的任务都创建一个新的线程来执行**，这也就说明，对线程个数的控制不是通过线程池来完成的。
+
+DefaultMessageListenerContainer.doInitialize:
+
+```java
+@Override
+protected void doInitialize() throws JMSException {
+    synchronized (this.lifecycleMonitor) {
+        for (int i = 0; i < this.concurrentConsumers; i++) {
+            scheduleNewInvoker();
+        }
+    }
+}
+```
+scheduleNewInvoker方法用于创建一个AsyncMessageListenerInvoker对象。
+
+## 启动
+
+DefaultMessageListenerContainer实现了SmartLifecycle接口，启动流程便通过此接口的相关方法触发。
+
+AbstractJmsListeningContainer.doStart:
+
+```java
+protected void doStart() throws JMSException {
+    // Lazily establish a shared Connection, if necessary.
+    if (sharedConnectionEnabled()) {
+        establishSharedConnection();
+    }
+
+    // Reschedule paused tasks, if any.
+    synchronized (this.lifecycleMonitor) {
+        this.running = true;
+        this.lifecycleMonitor.notifyAll();
+        resumePausedTasks();
+    }
+
+    // Start the shared Connection, if any.
+    if (sharedConnectionEnabled()) {
+        startSharedConnection();
+    }
+}
+```
+
+分为以下三部分进行说明。
+
+### 建立连接
+
+如果缓存级别不低于`CACHE_CONNECTION`，那么将在此时创建与ActiveMQ服务器的连接，原因很简单：因为在这个Container的声明周期内都是使用这一个连接。establishSharedConnection通过AbstractJmsListeningContainer
+的createSharedConnection方法实现:
+
+```java
+protected Connection createSharedConnection() {
+    Connection con = createConnection();
+    prepareSharedConnection(con);
+    return con;
+}
+```
+
+createConnection的实现就是通过jms的ConnectionFactory创建连接的过程，prepareSharedConnection也很简单:
+
+```java
+protected void prepareSharedConnection(Connection connection) {
+    String clientId = getClientId();
+    if (clientId != null) {
+        connection.setClientID(clientId);
+    }
+}
+```
+
+就是设置了一个客户端ID。
+
+### 启动线程池
+
+这一步其实就是将初始化流程中创建的AsyncMessageListenerInvoker交给线程池执行。
+
+AbstractJmsListeningContainer.resumePausedTasks:
+
+```java
+protected void resumePausedTasks() {
+    synchronized (this.lifecycleMonitor) {
+        if (!this.pausedTasks.isEmpty()) {
+            for (Iterator<?> it = this.pausedTasks.iterator(); it.hasNext();) {
+                Object task = it.next();
+                doRescheduleTask(task);
+                it.remove();
+            }
+        }
+    }
+}
+```
+
+pausedTasks中其实就是我们之前创建的AsyncMessageListenerInvoker对象集合，为什么这里没有必要展开。
+
+DefaultMessageListenerContainer.doRescheduleTask:
+
+```java
+@Override
+protected void doRescheduleTask(Object task) {
+    this.taskExecutor.execute((Runnable) task);
+}
+```
+
+从上面的分析可以看出，这里将导致concurrentConsumers个线程的创建，线程执行的逻辑显然是AsyncMessageListenerInvoker的run方法，具体在后面展开。
+
+### 连接启动
+
+startSharedConnection方法其实就是简单的调用了javax.jms.Connection的start方法，没什么好说的。
+
+## 运行流程
+
