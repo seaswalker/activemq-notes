@@ -532,10 +532,10 @@ DefaultMessageListenerContainer.AsyncMessageListenerInvoker的run方法最终调
 
 ```java
 private boolean invokeListener() throws JMSException {
-	initResourcesIfNecessary();
-	boolean messageReceived = receiveAndExecute(this, this.session, this.consumer);
-	this.lastMessageSucceeded = true;
-	return messageReceived;
+    initResourcesIfNecessary();
+    boolean messageReceived = receiveAndExecute(this, this.session, this.consumer);
+    this.lastMessageSucceeded = true;
+    return messageReceived;
 }
 ```
 
@@ -545,20 +545,20 @@ private boolean invokeListener() throws JMSException {
 
 ```java
 private void initResourcesIfNecessary() throws JMSException {
-	if (getCacheLevel() <= CACHE_CONNECTION) {
-		updateRecoveryMarker();
-	} else {
-		if (this.session == null && getCacheLevel() >= CACHE_SESSION) {
-			updateRecoveryMarker();
-			this.session = createSession(getSharedConnection());
-		}
-		if (this.consumer == null && getCacheLevel() >= CACHE_CONSUMER) {
-			this.consumer = createListenerConsumer(this.session);
-			synchronized (lifecycleMonitor) {
-				registeredWithDestination++;
-			}
-		}
-	}
+    if (getCacheLevel() <= CACHE_CONNECTION) {
+        updateRecoveryMarker();
+    } else {
+        if (this.session == null && getCacheLevel() >= CACHE_SESSION) {
+            updateRecoveryMarker();
+            this.session = createSession(getSharedConnection());
+        }
+        if (this.consumer == null && getCacheLevel() >= CACHE_CONSUMER) {
+            this.consumer = createListenerConsumer(this.session);
+            synchronized (lifecycleMonitor) {
+                registeredWithDestination++;
+            }
+        }
+    }
 }
 ```
 
@@ -570,19 +570,19 @@ private void initResourcesIfNecessary() throws JMSException {
 
 ```java
 protected void doExecuteListener(Session session, Message message) {
-	try {
-		invokeListener(session, message);
-	} catch (JMSException ex) {
-		rollbackOnExceptionIfNecessary(session, ex);
-		throw ex;
-	} catch (RuntimeException ex) {
-		rollbackOnExceptionIfNecessary(session, ex);
-		throw ex;
-	} catch (Error err) {
-		rollbackOnExceptionIfNecessary(session, err);
-		throw err;
-	}
-	commitIfNecessary(session, message);
+    try {
+        invokeListener(session, message);
+    } catch (JMSException ex) {
+        rollbackOnExceptionIfNecessary(session, ex);
+        throw ex;
+    } catch (RuntimeException ex) {
+        rollbackOnExceptionIfNecessary(session, ex);
+        throw ex;
+    } catch (Error err) {
+        rollbackOnExceptionIfNecessary(session, err);
+        throw err;
+    }
+    commitIfNecessary(session, message);
 }
 ```
 
@@ -590,11 +590,11 @@ invokeListener便是调用我们设置的MessageListener，无需多说，我们
 
 ```java
 protected void rollbackOnExceptionIfNecessary(Session session, Throwable ex) {
-	if (session.getTransacted()) {
-		JmsUtils.rollbackIfNecessary(session);
-	} else if (isClientAcknowledge(session)) {
-		session.recover();
-	}
+    if (session.getTransacted()) {
+        JmsUtils.rollbackIfNecessary(session);
+    } else if (isClientAcknowledge(session)) {
+        session.recover();
+    }
 }
 ```
 
@@ -602,7 +602,7 @@ JmsUtils里面也很简单：
 
 ```java
 public static void rollbackIfNecessary(Session session) {
-	session.rollback();
+    session.rollback();
 }
 ```
 
