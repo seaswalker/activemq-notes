@@ -526,3 +526,88 @@ startSharedConnection方法其实就是简单的调用了javax.jms.Connection的
 
 ## 运行流程
 
+这里我们以sessionTransacted应答模式为例进行展开。
+
+DefaultMessageListenerContainer.AsyncMessageListenerInvoker的run方法最终调用了其invokeListener方法，这边是其处理的核心逻辑所在：
+
+```java
+private boolean invokeListener() throws JMSException {
+	initResourcesIfNecessary();
+	boolean messageReceived = receiveAndExecute(this, this.session, this.consumer);
+	this.lastMessageSucceeded = true;
+	return messageReceived;
+}
+```
+
+### Session/Consumer初始化
+
+这里主要是针对不同的缓存级别初始化Session、Consumer等组件。initResourcesIfNecessary:
+
+```java
+private void initResourcesIfNecessary() throws JMSException {
+	if (getCacheLevel() <= CACHE_CONNECTION) {
+		updateRecoveryMarker();
+	} else {
+		if (this.session == null && getCacheLevel() >= CACHE_SESSION) {
+			updateRecoveryMarker();
+			this.session = createSession(getSharedConnection());
+		}
+		if (this.consumer == null && getCacheLevel() >= CACHE_CONSUMER) {
+			this.consumer = createListenerConsumer(this.session);
+			synchronized (lifecycleMonitor) {
+				registeredWithDestination++;
+			}
+		}
+	}
+}
+```
+
+很容易理解，底层的创建就是ActiveMQ实现。
+
+### onMessage
+
+核心逻辑为AbstractMessageListenerContainer.doExecuteListener：
+
+```java
+protected void doExecuteListener(Session session, Message message) {
+	try {
+		invokeListener(session, message);
+	} catch (JMSException ex) {
+		rollbackOnExceptionIfNecessary(session, ex);
+		throw ex;
+	} catch (RuntimeException ex) {
+		rollbackOnExceptionIfNecessary(session, ex);
+		throw ex;
+	} catch (Error err) {
+		rollbackOnExceptionIfNecessary(session, err);
+		throw err;
+	}
+	commitIfNecessary(session, message);
+}
+```
+
+invokeListener便是调用我们设置的MessageListener，无需多说，我们看看rollbackOnExceptionIfNecessary干了什么:
+
+```java
+protected void rollbackOnExceptionIfNecessary(Session session, Throwable ex) {
+	if (session.getTransacted()) {
+		JmsUtils.rollbackIfNecessary(session);
+	} else if (isClientAcknowledge(session)) {
+		session.recover();
+	}
+}
+```
+
+JmsUtils里面也很简单：
+
+```java
+public static void rollbackIfNecessary(Session session) {
+	session.rollback();
+}
+```
+
+### 总结
+
+如果我们直接使用ActiveMQ的原生API，那么对于sessionTransacted类型的应答机制我们需要手动调用Session的commit或rollback方法，但是Spring的DefaultMessageListenerContainer帮我们做了这项任务。即：
+
+如果我们的业务逻辑没有抛出异常，那么Spring将为我们自动commit，反之，自动rollback。
